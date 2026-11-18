@@ -7,7 +7,6 @@ import { UpdateError } from "../src/errors.js";
 import { decide } from "../src/gate.js";
 import { checkRootWithRetry, inspectLiveRelease, installWrangler, runWrangler, spawnCollected } from "../src/live.js";
 import { prepareRelease } from "../src/prepare.js";
-import { redact } from "../src/sanitize.js";
 import { execute } from "../src/runner.js";
 
 const CONTROL_KEYS = ["EVENT_NAME", "DISPATCH_MODE", "AUTO_UPDATE_ENABLED", "GITHUB_REPOSITORY"];
@@ -21,7 +20,71 @@ export function controlFromEnv(env) {
   };
 }
 
-export async function main(env = process.env, fetchImpl = globalThis.fetch) {
+const FAILURE_REASONS = new Set([
+  "account-id",
+  "asset-digest",
+  "asset-name",
+  "asset-size",
+  "asset-state",
+  "assets",
+  "checksum",
+  "checkpoint",
+  "checkpoint-json",
+  "checkpoint-shape",
+  "checkpoint-status",
+  "config-in-tree",
+  "crc",
+  "directory",
+  "download-host",
+  "download-size",
+  "download-status",
+  "draft",
+  "failed",
+  "git-in-tree",
+  "inflate",
+  "log-limit",
+  "prerelease",
+  "ratio-limit",
+  "redirect",
+  "release-id",
+  "release-id-mismatch",
+  "release-json",
+  "release-shape",
+  "release-tag-mismatch",
+  "size-limit",
+  "sums-shape",
+  "symlink",
+  "tag",
+  "too-many-entries",
+  "unexpected-entry",
+  "unsafe-command",
+  "unsafe-name",
+  "upload-contents",
+  "upload-path",
+  "wrangler-bin",
+  "wrangler-exit",
+  "wrangler-install",
+  "wrangler-version",
+  "zip-central",
+  "zip-eocd",
+  "zip-extra",
+  "zip-flags",
+  "zip-local",
+  "zip-method",
+  "zip-shape",
+  "zip-size",
+  "zip-version",
+  "zip64",
+]);
+
+export function reportFailure(err) {
+  const code = err instanceof UpdateError && FAILURE_REASONS.has(err.code) ? err.code : "failed";
+  console.error(JSON.stringify({ ok: false, reason: code }));
+}
+
+export async function main(env = process.env, fetchImpl = globalThis.fetch, hooks = {}) {
+  const spawnImpl = hooks.spawnImpl ?? spawnCollected;
+  const execFileImpl = hooks.execFileImpl ?? execFileAsync;
   const decision = decide(controlFromEnv(env));
   let uploadDir = "";
   try {
@@ -42,9 +105,8 @@ export async function main(env = process.env, fetchImpl = globalThis.fetch) {
       deploy: async (prepared) => {
         const prefix = await fs.promises.mkdtemp(path.join(os.tmpdir(), "cfnew-wrangler-"));
         try {
-          const bin = await installWrangler(prefix, execFileAsync);
-          const deployed = await runWrangler(prepared, { bin, env, spawnImpl: spawnCollected });
-          if (deployed.log) console.error(deployed.log);
+          const bin = await installWrangler(prefix, execFileImpl);
+          await runWrangler(prepared, { bin, env, spawnImpl });
         } finally {
           await fs.promises.rm(prefix, { recursive: true, force: true });
         }
@@ -76,17 +138,12 @@ export async function main(env = process.env, fetchImpl = globalThis.fetch) {
 
 function execFileAsync(command, args) {
   return new Promise((resolve, reject) => {
-    execFile(command, args, { shell: false, timeout: 180_000, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
+    execFile(command, args, { shell: false, timeout: 180_000, maxBuffer: 10 * 1024 * 1024 }, (err) => {
       if (err) {
-        const wrapped = new UpdateError("wrangler-install");
-        wrapped.log = redact(`${stdout || ""}\n${stderr || ""}`, [
-          process.env.CLOUDFLARE_API_TOKEN,
-          process.env.CLOUDFLARE_ACCOUNT_ID,
-        ]);
-        reject(wrapped);
+        reject(new UpdateError("wrangler-install"));
         return;
       }
-      resolve({ stdout, stderr });
+      resolve();
     });
   });
 }
@@ -99,10 +156,7 @@ if (invokedDirectly) {
       process.exitCode = result.ok ? 0 : 1;
     })
     .catch((err) => {
-      const code = err instanceof UpdateError ? err.code : "failed";
-      const log = err instanceof UpdateError && err.log ? err.log : "";
-      console.error(JSON.stringify({ ok: false, reason: code }));
-      if (log) console.error(log);
+      reportFailure(err);
       process.exitCode = 1;
     });
 }

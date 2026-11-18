@@ -6,7 +6,6 @@ import { HEALTH_URL, LIMITS, WRANGLER_VERSION } from "./constants.js";
 import { deploymentsUrl, liveMatches, summarizeDeployments } from "./checkpoint.js";
 import { evaluateHealth } from "./health.js";
 import { readBodyLimited } from "./http.js";
-import { redact } from "./sanitize.js";
 import { buildWranglerInvocation, scrubEnv } from "./target.js";
 
 export async function inspectLiveRelease(accountId, token, expected, fetchImpl) {
@@ -88,13 +87,7 @@ export async function runWrangler(prepared, { bin, env, spawnImpl }) {
     env: childEnv,
     shell: false,
   });
-  const log = trimLog(redact(`${output.stdout || ""}\n${output.stderr || ""}`, [env.CLOUDFLARE_API_TOKEN, env.CLOUDFLARE_ACCOUNT_ID]));
-  if (output.code !== 0) {
-    const error = new UpdateError("wrangler-exit");
-    error.log = log;
-    throw error;
-  }
-  return { log };
+  if (!output || output.code !== 0) throw new UpdateError("wrangler-exit");
 }
 
 export function spawnCollected(command, args, options) {
@@ -139,9 +132,4 @@ export function spawnCollected(command, args, options) {
       });
     });
   });
-}
-
-function trimLog(text) {
-  const lines = text.split(/\r?\n/).slice(-40);
-  return lines.join("\n").slice(-4_000);
 }
