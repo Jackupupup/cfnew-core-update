@@ -1,0 +1,12 @@
+{
+  "name": "cfnew-core-update",
+  "private": true,
+  "type": "module",
+  "description": "Checksum-verified updater for an existing Cloudflare Pages Direct Upload project.",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test"
+  }
+}

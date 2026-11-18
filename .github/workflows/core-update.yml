@@ -1,0 +1,103 @@
+name: cfnew core update
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "dry-run verifies without upload. deploy uploads the verified folder to the existing project."
+        required: true
+        type: choice
+        default: dry-run
+        options:
+          - dry-run
+          - deploy
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cfnew-backup-core-update
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+      - name: Test
+        run: node --test
+
+  dry-run:
+    name: dry run
+    needs: check
+    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'dry-run' && github.repository == 'Jackupupup/cfnew-core-update' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      EVENT_NAME: ${{ github.event_name }}
+      DISPATCH_MODE: ${{ github.event.inputs.mode }}
+      AUTO_UPDATE_ENABLED: ${{ vars.AUTO_UPDATE_ENABLED }}
+      GITHUB_REPOSITORY: ${{ github.repository }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+      - name: Verify release without deploying
+        run: node scripts/update-core.mjs run
+
+  deploy:
+    name: deploy existing project
+    needs: check
+    if: ${{ github.repository == 'Jackupupup/cfnew-core-update' && ((github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'deploy') || (github.event_name == 'schedule' && vars.AUTO_UPDATE_ENABLED == 'true')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      EVENT_NAME: ${{ github.event_name }}
+      DISPATCH_MODE: ${{ github.event.inputs.mode }}
+      AUTO_UPDATE_ENABLED: ${{ vars.AUTO_UPDATE_ENABLED }}
+      GITHUB_REPOSITORY: ${{ github.repository }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+      - name: Deploy verified core folder
+        run: node scripts/update-core.mjs run
+
+  gated:
+    name: schedule gated off
+    needs: check
+    if: ${{ github.event_name == 'schedule' && vars.AUTO_UPDATE_ENABLED != 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Report gate
+        run: echo "AUTO_UPDATE_ENABLED is not true. Scheduled deploy did not run."
